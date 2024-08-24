@@ -25,11 +25,20 @@ func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 }
 
 func (cfg *apiConfig) checkMainPageVisit(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
 	w.WriteHeader(200)
 
-	write, err := w.Write([]byte("Hits: " + strconv.Itoa(cfg.fileserverHits) + "\n"))
+	body := fmt.Sprintf(`<html>
+
+		<body>
+			<h1>Welcome, Chirpy Admin</h1>
+			<p>Chirpy has been visited %d times!</p>
+		</body>
+
+		</html>`, cfg.fileserverHits)
+
+	write, err := w.Write([]byte(body))
 	if err != nil {
 		fmt.Printf("Error writing response: %v\n", err)
 	}
