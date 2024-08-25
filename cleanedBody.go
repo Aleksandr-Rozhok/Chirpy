@@ -1,6 +1,7 @@
 package main
 
 import (
+	"Chirpy/models"
 	"strings"
 )
 
@@ -8,7 +9,11 @@ type CleanedBody struct {
 	CleanedBody string `json:"cleaned_body"`
 }
 
-func (b *Body) cleanBody() CleanedBody {
+type LocalChirp struct {
+	*models.Chirp
+}
+
+func (b *LocalChirp) cleanBody() CleanedBody {
 	profane := []string{
 		"kerfuffle",
 		"sharbert",
