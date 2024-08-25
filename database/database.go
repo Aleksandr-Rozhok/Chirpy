@@ -55,7 +55,6 @@ func (db *DB) GetChirps() ([]models.Chirp, error) {
 	result := make([]models.Chirp, len(loadDB.Chirps)+1)
 
 	for k, v := range loadDB.Chirps {
-		fmt.Println(k, v)
 		result[k] = v
 	}
 

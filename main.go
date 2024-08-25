@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
 )
 
 func main() {
@@ -23,7 +25,7 @@ func main() {
 	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
-		w.WriteHeader(200)
+		w.WriteHeader(http.StatusOK)
 
 		write, err := w.Write([]byte("OK"))
 		if err != nil {
@@ -95,8 +97,47 @@ func main() {
 			responseData, err := json.Marshal(chirp)
 			write, err := w.Write(responseData)
 			if err != nil {
-				return
+				fmt.Printf("Error writing response: %v\n", err)
 			}
+			fmt.Printf("Response written to: %d bytes\n", write)
+		}
+	})
+	mux.HandleFunc("GET /api/chirps/{chirpID}", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+
+		db, err := database.NewDB("database.json")
+		if err != nil {
+			fmt.Printf("Error opening database: %v\n", err)
+		}
+
+		path := r.URL.Path
+
+		sliceOfPath := strings.Split(path, "/")
+		idOfChirp, err := strconv.Atoi(sliceOfPath[len(sliceOfPath)-1])
+		if err != nil {
+			fmt.Printf("Error converting chirp ID to int: %v\n", err)
+		}
+
+		chirps, err := db.GetChirps()
+		if err != nil {
+			fmt.Printf("Error getting chirp %v\n", chirps)
+		}
+
+		fmt.Println(len(chirps), idOfChirp)
+		if len(chirps) < idOfChirp {
+			w.WriteHeader(http.StatusNotFound)
+			http.Error(w, "Error reading request body", http.StatusNotFound)
+		} else {
+			w.WriteHeader(http.StatusOK)
+			chirp := chirps[idOfChirp-1]
+
+			responseData, err := json.MarshalIndent(chirp, "", "  ")
+			write, err := w.Write(responseData)
+			if err != nil {
+				fmt.Printf("Error writing response: %v\n", err)
+			}
+
 			fmt.Printf("Response written to: %d bytes\n", write)
 		}
 	})
