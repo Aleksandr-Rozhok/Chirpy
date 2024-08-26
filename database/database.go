@@ -4,6 +4,7 @@ import (
 	"Chirpy/models"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"sync"
 )
@@ -32,31 +33,44 @@ func NewDB(path string) (*DB, error) {
 	return &db, nil
 }
 
-func (db *DB) CreateItem(body string, typeItem string) (models.Storable, error) {
+func (db *DB) CreateItem(body string, typeItem string) (models.Storable, *models.UserResponse, error) {
 	unmarshalFunc, ok := models.UnmarshalFunc[typeItem]
 	if !ok {
-		return nil, errors.New("invalid type item")
+		return nil, nil, errors.New("invalid type item")
 	}
 
 	newID := 0
+	userResponse := models.UserResponse{}
 
 	item, err := unmarshalFunc([]byte(body))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	switch typeItem {
-	case "chirp":
+	switch v := item.(type) {
+	case *models.Chirp:
 		newID = db.generateID("chirp")
-	case "user":
+	case *models.User:
 		newID = db.generateID("user")
+		db.mux.Lock()
+		v.SetHashPass(v.Password)
+		db.mux.Unlock()
+
+		userResponse = models.UserResponse{
+			Id:    newID,
+			Email: v.Email,
+		}
+
+		if !db.emailValidator(v.Email) {
+			return nil, nil, fmt.Errorf("This email address is already in use")
+		}
 	}
 
 	db.mux.Lock()
 	item.SetId(newID)
 	db.mux.Unlock()
 
-	return item, nil
+	return item, &userResponse, nil
 }
 
 func (db *DB) GetItems(typeItem string) ([]models.Storable, error) {
@@ -68,11 +82,11 @@ func (db *DB) GetItems(typeItem string) ([]models.Storable, error) {
 	}
 
 	switch typeItem {
-	case "chirp":
+	case "chirps":
 		for _, v := range loadDB.Chirps {
 			result = append(result, &v)
 		}
-	case "user":
+	case "users":
 		for _, v := range loadDB.Users {
 			result = append(result, &v)
 		}
@@ -125,7 +139,6 @@ func (db *DB) WriteDB(dbStructure DBStructure, newItem models.Storable) error {
 	case *models.Chirp:
 		dbStructure.Chirps[db.generateID("chirp")] = *item
 	case *models.User:
-
 		dbStructure.Users[db.generateID("user")] = *item
 	}
 
@@ -145,4 +158,22 @@ func (db *DB) WriteDB(dbStructure DBStructure, newItem models.Storable) error {
 func (db *DB) generateID(typeId string) int {
 	allItems, _ := db.GetItems(typeId)
 	return len(allItems) + 1
+}
+
+func (db *DB) emailValidator(email string) bool {
+	allUsers, err := db.GetItems("users")
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	for _, user := range allUsers {
+		switch v := user.(type) {
+		case *models.User:
+			if v.Email == email {
+				return false
+			}
+		}
+	}
+
+	return true
 }

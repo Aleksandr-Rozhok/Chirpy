@@ -2,8 +2,10 @@ package main
 
 import (
 	"Chirpy/database"
+	"Chirpy/models"
 	"flag"
 	"fmt"
+	"golang.org/x/crypto/bcrypt"
 	"io"
 	"net/http"
 	"os"
@@ -79,7 +81,7 @@ func main() {
 				}
 			}(r.Body)
 
-			chirp, err := db.CreateItem(string(bodyBytes), "chirp")
+			chirp, _, err := db.CreateItem(string(bodyBytes), "chirp")
 			if err != nil {
 				fmt.Printf("Error creating chirp: %v\n", err)
 			}
@@ -136,7 +138,7 @@ func main() {
 			}
 		}(r.Body)
 
-		user, err := db.CreateItem(string(bodyBytes), "user")
+		user, userResponse, err := db.CreateItem(string(bodyBytes), "user")
 		if err != nil {
 			fmt.Printf("Error creating chirp: %v\n", err)
 		}
@@ -152,7 +154,58 @@ func main() {
 			fmt.Printf("Error writing database: %v\n", err)
 		}
 
-		respondWithJSON(w, http.StatusCreated, user)
+		respondWithJSON(w, http.StatusCreated, userResponse)
+	})
+	mux.HandleFunc("POST /api/login", func(w http.ResponseWriter, r *http.Request) {
+		db, err := database.NewDB("database.json")
+
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "Error reading request body", http.StatusInternalServerError)
+			return
+		}
+
+		defer func(Body io.ReadCloser) {
+			err := Body.Close()
+			if err != nil {
+				fmt.Printf("Error writing response: %v\n", err)
+			}
+		}(r.Body)
+
+		unmarshalFunc, ok := models.UnmarshalFunc["user"]
+		if !ok {
+			fmt.Printf("Error unmarshalling user: %v\n", err)
+		}
+
+		item, err := unmarshalFunc(bodyBytes)
+		if err != nil {
+			fmt.Printf("Error unmarshalling user: %v\n", err)
+		}
+
+		users, err := db.GetItems("users")
+		if err != nil {
+			respondWithError(w, http.StatusNotFound, "users not found")
+		}
+
+		for _, user := range users {
+			userA, _ := item.(*models.User)
+			userB, _ := user.(*models.User)
+
+			equalPass := bcrypt.CompareHashAndPassword([]byte(userB.Password), []byte(userA.Password))
+			if equalPass != nil {
+				respondWithError(w, http.StatusUnauthorized, "Wrong username or password")
+			} else if userA.Email != userB.Email {
+				respondWithError(w, http.StatusUnauthorized, "Wrong username or password")
+			} else {
+				userResponse := models.UserResponse{
+					Id:    userB.Id,
+					Email: userB.Email,
+				}
+
+				respondWithJSON(w, http.StatusOK, userResponse)
+			}
+		}
+
 	})
 
 	fileServerHandler := http.StripPrefix("/app", http.FileServer(http.Dir(".")))
