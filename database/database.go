@@ -3,7 +3,7 @@ package database
 import (
 	"Chirpy/models"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"os"
 	"sync"
 )
@@ -15,6 +15,7 @@ type DB struct {
 
 type DBStructure struct {
 	Chirps map[int]models.Chirp `json:"chirps"`
+	Users  map[int]models.User  `json:"users"`
 }
 
 func NewDB(path string) (*DB, error) {
@@ -31,34 +32,51 @@ func NewDB(path string) (*DB, error) {
 	return &db, nil
 }
 
-func (db *DB) CreateChirp(body string) (models.Chirp, error) {
-	var chirp models.Chirp
-	err := json.Unmarshal([]byte(body), &chirp)
-	if err != nil {
-		fmt.Println(err)
+func (db *DB) CreateItem(body string, typeItem string) (models.Storable, error) {
+	unmarshalFunc, ok := models.UnmarshalFunc[typeItem]
+	if !ok {
+		return nil, errors.New("invalid type item")
 	}
 
-	newID := db.generateID()
+	newID := 0
+
+	item, err := unmarshalFunc([]byte(body))
+	if err != nil {
+		return nil, err
+	}
+
+	switch typeItem {
+	case "chirp":
+		newID = db.generateID("chirp")
+	case "user":
+		newID = db.generateID("user")
+	}
+
 	db.mux.Lock()
-	chirp.Id = newID
+	item.SetId(newID)
 	db.mux.Unlock()
 
-	return chirp, nil
+	return item, nil
 }
 
-func (db *DB) GetChirps() ([]models.Chirp, error) {
+func (db *DB) GetItems(typeItem string) ([]models.Storable, error) {
+	var result []models.Storable
+
 	loadDB, err := db.LoadDB()
 	if err != nil {
 		return nil, err
 	}
 
-	result := make([]models.Chirp, len(loadDB.Chirps)+1)
-
-	for k, v := range loadDB.Chirps {
-		result[k] = v
+	switch typeItem {
+	case "chirp":
+		for _, v := range loadDB.Chirps {
+			result = append(result, &v)
+		}
+	case "user":
+		for _, v := range loadDB.Users {
+			result = append(result, &v)
+		}
 	}
-
-	result = result[1:]
 
 	return result, nil
 }
@@ -67,6 +85,7 @@ func (db *DB) ensureDB() error {
 	filename := "database.json"
 	emptyDB := DBStructure{
 		Chirps: make(map[int]models.Chirp),
+		Users:  make(map[int]models.User),
 	}
 
 	data, err := json.Marshal(&emptyDB)
@@ -98,10 +117,17 @@ func (db *DB) LoadDB() (DBStructure, error) {
 	return dbStructure, nil
 }
 
-func (db *DB) WriteDB(dbStructure DBStructure, newChirp models.Chirp) error {
+func (db *DB) WriteDB(dbStructure DBStructure, newItem models.Storable) error {
 	db.mux.Lock()
 	defer db.mux.Unlock()
-	dbStructure.Chirps[db.generateID()] = newChirp
+
+	switch item := newItem.(type) {
+	case *models.Chirp:
+		dbStructure.Chirps[db.generateID("chirp")] = *item
+	case *models.User:
+
+		dbStructure.Users[db.generateID("user")] = *item
+	}
 
 	data, err := json.Marshal(dbStructure)
 	if err != nil {
@@ -116,7 +142,7 @@ func (db *DB) WriteDB(dbStructure DBStructure, newChirp models.Chirp) error {
 	return nil
 }
 
-func (db *DB) generateID() int {
-	allChirps, _ := db.GetChirps()
-	return len(allChirps) + 1
+func (db *DB) generateID(typeId string) int {
+	allItems, _ := db.GetItems(typeId)
+	return len(allItems) + 1
 }

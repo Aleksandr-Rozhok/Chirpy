@@ -21,6 +21,7 @@ func respondWithError(w http.ResponseWriter, code int, msg string) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
 	w.WriteHeader(code)
 
 	write, err := w.Write(dat)
