@@ -54,16 +54,56 @@ func (db *DB) CreateItem(body string, typeItem string) (models.Storable, *models
 		newID = db.generateID("user")
 		db.mux.Lock()
 		v.SetHashPass(v.Password)
+
+		if v.ExpiresInSeconds == 0 {
+			v.ExpiresInSeconds = 86400
+		}
 		db.mux.Unlock()
 
 		userResponse = models.UserResponse{
 			Id:    newID,
 			Email: v.Email,
 		}
+	}
 
-		if !db.emailValidator(v.Email) {
-			return nil, nil, fmt.Errorf("This email address is already in use")
+	db.mux.Lock()
+	item.SetId(newID)
+	db.mux.Unlock()
+
+	return item, &userResponse, nil
+}
+
+func (db *DB) UpdateItem(body string, typeItem string, id int) (models.Storable, *models.UserResponse, error) {
+	unmarshalFunc, ok := models.UnmarshalFunc[typeItem]
+	if !ok {
+		return nil, nil, errors.New("invalid type item")
+	}
+
+	newID := id
+	userResponse := models.UserResponse{}
+
+	item, err := unmarshalFunc([]byte(body))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	switch v := item.(type) {
+	case *models.Chirp:
+		newID = db.generateID("chirp")
+	case *models.User:
+		userResponse = models.UserResponse{
+			Id:    newID,
+			Email: v.Email,
 		}
+
+		newID = db.generateID("user")
+		db.mux.Lock()
+		v.SetHashPass(v.Password)
+
+		if v.ExpiresInSeconds == 0 {
+			v.ExpiresInSeconds = 86400
+		}
+		db.mux.Unlock()
 	}
 
 	db.mux.Lock()
@@ -160,7 +200,7 @@ func (db *DB) generateID(typeId string) int {
 	return len(allItems) + 1
 }
 
-func (db *DB) emailValidator(email string) bool {
+func (db *DB) EmailValidator(email string) bool {
 	allUsers, err := db.GetItems("users")
 	if err != nil {
 		fmt.Println(err)

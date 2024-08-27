@@ -20,14 +20,21 @@ func (c *Chirp) SetId(id int) {
 }
 
 type User struct {
-	Id       int    `json:"id"`
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Id               int    `json:"id"`
+	Email            string `json:"email"`
+	Password         string `json:"password"`
+	ExpiresInSeconds int    `json:"expires_in_seconds"`
 }
 
 type UserResponse struct {
 	Id    int    `json:"id"`
 	Email string `json:"email"`
+}
+
+type APIUserResponse struct {
+	Id    int    `json:"id"`
+	Email string `json:"email"`
+	Token string `json:"token"`
 }
 
 func (u *User) SetId(id int) {

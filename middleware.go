@@ -9,6 +9,7 @@ import (
 
 type apiConfig struct {
 	fileserverHits int
+	jwtSecret      []byte
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {

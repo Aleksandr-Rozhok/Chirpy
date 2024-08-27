@@ -5,15 +5,24 @@ import (
 	"Chirpy/models"
 	"flag"
 	"fmt"
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/joho/godotenv"
 	"golang.org/x/crypto/bcrypt"
 	"io"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func main() {
+	err := godotenv.Load()
+	if err != nil {
+		fmt.Println("Error loading .env file")
+	}
+	jwtSecret := []byte(os.Getenv("JWT_SECRET"))
+
 	debug := flag.Bool("debug", false, "Run server in debug mode")
 	flag.Parse()
 
@@ -35,6 +44,7 @@ func main() {
 
 	cfg := apiConfig{
 		fileserverHits: 0,
+		jwtSecret:      jwtSecret,
 	}
 
 	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -142,7 +152,13 @@ func main() {
 		if err != nil {
 			fmt.Printf("Error creating chirp: %v\n", err)
 		}
-		fmt.Printf("Created chirp %v\n", user)
+		fmt.Printf("Created user %v\n", user)
+
+		userA, _ := user.(*models.User)
+
+		if !db.EmailValidator(userA.Email) {
+			respondWithError(w, http.StatusConflict, "This email address already exists")
+		}
 
 		loadDB, err := db.LoadDB()
 		if err != nil {
@@ -155,6 +171,80 @@ func main() {
 		}
 
 		respondWithJSON(w, http.StatusCreated, userResponse)
+	})
+	mux.HandleFunc("PUT /api/users", func(w http.ResponseWriter, r *http.Request) {
+		db, err := database.NewDB("database.json")
+		if err != nil {
+			fmt.Printf("Error opening database: %v\n", err)
+		}
+
+		headerAuth := r.Header.Get("Authorization")
+		tokenWithoutPrefix := strings.TrimPrefix(headerAuth, "Bearer ")
+
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "Error reading request body", http.StatusInternalServerError)
+			return
+		}
+
+		defer func(Body io.ReadCloser) {
+			err := Body.Close()
+			if err != nil {
+				fmt.Printf("Error writing response: %v\n", err)
+			}
+		}(r.Body)
+
+		claims := &jwt.RegisteredClaims{}
+		token, err := jwt.ParseWithClaims(tokenWithoutPrefix, claims, func(token *jwt.Token) (interface{}, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+			return jwtSecret, nil
+		})
+
+		if err != nil {
+			http.Error(w, "Unauthorized: "+err.Error(), http.StatusUnauthorized)
+			return
+		}
+
+		if !token.Valid {
+			http.Error(w, "Invalid token", http.StatusUnauthorized)
+			return
+		}
+
+		if claims.ExpiresAt.Time.Before(time.Now()) {
+			http.Error(w, "Token has expired", http.StatusUnauthorized)
+			return
+		}
+
+		if claims.Subject == "" {
+			http.Error(w, "Token subject missing", http.StatusUnauthorized)
+			return
+		}
+
+		if claims.Issuer != "chirpy" {
+			http.Error(w, "Invalid issuer", http.StatusUnauthorized)
+			return
+		}
+
+		userID, err := strconv.Atoi(claims.Subject)
+		if err != nil {
+			fmt.Printf("Error converting user ID to int: %v\n", err)
+		}
+
+		updatedUser, updatedUserResponse, err := db.UpdateItem(string(bodyBytes), "user", userID)
+
+		loadDB, err := db.LoadDB()
+		if err != nil {
+			fmt.Printf("Error loading DB: %v\n", err)
+		}
+
+		err = db.WriteDB(loadDB, updatedUser)
+		if err != nil {
+			fmt.Printf("Error writing database: %v\n", err)
+		}
+
+		respondWithJSON(w, http.StatusOK, updatedUserResponse)
 	})
 	mux.HandleFunc("POST /api/login", func(w http.ResponseWriter, r *http.Request) {
 		db, err := database.NewDB("database.json")
@@ -187,8 +277,9 @@ func main() {
 			respondWithError(w, http.StatusNotFound, "users not found")
 		}
 
+		userA, _ := item.(*models.User)
+
 		for _, user := range users {
-			userA, _ := item.(*models.User)
 			userB, _ := user.(*models.User)
 
 			equalPass := bcrypt.CompareHashAndPassword([]byte(userB.Password), []byte(userA.Password))
@@ -197,9 +288,24 @@ func main() {
 			} else if userA.Email != userB.Email {
 				respondWithError(w, http.StatusUnauthorized, "Wrong username or password")
 			} else {
-				userResponse := models.UserResponse{
+				claims := &jwt.RegisteredClaims{
+					ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Second + time.Duration(userA.ExpiresInSeconds))),
+					Issuer:    "chirpy",
+					Subject:   strconv.Itoa(userB.Id),
+				}
+
+				token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+
+				tokenString, err := token.SignedString(jwtSecret)
+				if err != nil {
+					fmt.Println("Error signing token:", err)
+					return
+				}
+
+				userResponse := models.APIUserResponse{
 					Id:    userB.Id,
 					Email: userB.Email,
+					Token: tokenString,
 				}
 
 				respondWithJSON(w, http.StatusOK, userResponse)
@@ -211,7 +317,7 @@ func main() {
 	fileServerHandler := http.StripPrefix("/app", http.FileServer(http.Dir(".")))
 	mux.Handle("/app/", cfg.middlewareMetricsInc(fileServerHandler))
 
-	err := http.ListenAndServe(server.Addr, server.Handler)
+	err = http.ListenAndServe(server.Addr, server.Handler)
 	if err != nil {
 		fmt.Println("Error:", err)
 	}
