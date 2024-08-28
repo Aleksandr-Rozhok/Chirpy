@@ -47,16 +47,22 @@ func (db *DB) CreateItem(body string, typeItem string) (models.Storable, *models
 		return nil, nil, err
 	}
 
+	loadedDB, err := db.LoadDB()
+	if err != nil {
+		return nil, nil, err
+	}
+
 	switch v := item.(type) {
 	case *models.Chirp:
-		newID = db.generateID("chirp")
+		newID = db.generateID(len(loadedDB.Chirps), "chirp")
 	case *models.User:
-		newID = db.generateID("user")
+		newID = db.generateID(len(loadedDB.Users), "user")
 		db.mux.Lock()
 		v.SetHashPass(v.Password)
+		v.GenerateRefreshToken()
 
 		if v.ExpiresInSeconds == 0 {
-			v.ExpiresInSeconds = 86400
+			v.ExpiresInSeconds = 5184000
 		}
 		db.mux.Unlock()
 
@@ -79,38 +85,50 @@ func (db *DB) UpdateItem(body string, typeItem string, id int) (models.Storable,
 		return nil, nil, errors.New("invalid type item")
 	}
 
-	newID := id
-	userResponse := models.UserResponse{}
-
-	item, err := unmarshalFunc([]byte(body))
+	newItem, err := unmarshalFunc([]byte(body))
 	if err != nil {
 		return nil, nil, err
 	}
 
-	switch v := item.(type) {
-	case *models.Chirp:
-		newID = db.generateID("chirp")
-	case *models.User:
-		userResponse = models.UserResponse{
-			Id:    newID,
-			Email: v.Email,
-		}
+	newItemWithType := newItem.(*models.User)
+	userResponse := models.UserResponse{}
 
-		newID = db.generateID("user")
-		db.mux.Lock()
-		v.SetHashPass(v.Password)
-
-		if v.ExpiresInSeconds == 0 {
-			v.ExpiresInSeconds = 86400
-		}
-		db.mux.Unlock()
+	items, err := db.GetItems(typeItem)
+	if err != nil {
+		return nil, nil, err
 	}
 
-	db.mux.Lock()
-	item.SetId(newID)
-	db.mux.Unlock()
+	for _, item := range items {
+		if item.GetId() == id {
+			switch v := item.(type) {
+			case *models.Chirp:
+				v.Id = id
+			case *models.User:
+				db.mux.Lock()
+				v.SetHashPass(v.Password)
+				v.Email = newItemWithType.Email
 
-	return item, &userResponse, nil
+				if v.ExpiresInSeconds == 0 {
+					v.ExpiresInSeconds = 5184000
+				} else {
+					v.ExpiresInSeconds = newItemWithType.ExpiresInSeconds
+				}
+				db.mux.Unlock()
+
+				userResponse = models.UserResponse{
+					Id:    id,
+					Email: newItemWithType.Email,
+				}
+			}
+
+			db.mux.Lock()
+			item.SetId(id)
+			db.mux.Unlock()
+
+			return item, &userResponse, nil
+		}
+	}
+	return nil, nil, errors.New("item not found")
 }
 
 func (db *DB) GetItems(typeItem string) ([]models.Storable, error) {
@@ -122,11 +140,11 @@ func (db *DB) GetItems(typeItem string) ([]models.Storable, error) {
 	}
 
 	switch typeItem {
-	case "chirps":
+	case "chirp":
 		for _, v := range loadDB.Chirps {
 			result = append(result, &v)
 		}
-	case "users":
+	case "user":
 		for _, v := range loadDB.Users {
 			result = append(result, &v)
 		}
@@ -177,9 +195,9 @@ func (db *DB) WriteDB(dbStructure DBStructure, newItem models.Storable) error {
 
 	switch item := newItem.(type) {
 	case *models.Chirp:
-		dbStructure.Chirps[db.generateID("chirp")] = *item
+		dbStructure.Chirps[db.generateID(len(dbStructure.Chirps), "chirp")] = *item
 	case *models.User:
-		dbStructure.Users[db.generateID("user")] = *item
+		dbStructure.Users[db.generateID(len(dbStructure.Users), "user")] = *item
 	}
 
 	data, err := json.Marshal(dbStructure)
@@ -195,13 +213,18 @@ func (db *DB) WriteDB(dbStructure DBStructure, newItem models.Storable) error {
 	return nil
 }
 
-func (db *DB) generateID(typeId string) int {
-	allItems, _ := db.GetItems(typeId)
-	return len(allItems) + 1
+func (db *DB) generateID(lenItems int, typeId string) int {
+	if typeId == "chirp" {
+		return lenItems + 1
+	} else if typeId == "user" {
+		return lenItems + 1
+	}
+
+	return 0
 }
 
 func (db *DB) EmailValidator(email string) bool {
-	allUsers, err := db.GetItems("users")
+	allUsers, err := db.GetItems("user")
 	if err != nil {
 		fmt.Println(err)
 	}
@@ -216,4 +239,34 @@ func (db *DB) EmailValidator(email string) bool {
 	}
 
 	return true
+}
+
+func (db *DB) DeleteItem(id int) DBStructure {
+	items, err := db.LoadDB()
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	for key, _ := range items.Users {
+		if key == id {
+			delete(items.Users, key)
+		}
+	}
+	return items
+}
+
+func (db *DB) RevokeRefreshToken(id int) DBStructure {
+	items, err := db.LoadDB()
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	for key, val := range items.Users {
+		if key == id {
+			val.RefreshToken = ""
+			items.Users[key] = val
+		}
+	}
+
+	return items
 }

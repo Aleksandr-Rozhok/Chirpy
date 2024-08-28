@@ -3,6 +3,9 @@ package main
 import (
 	"Chirpy/database"
 	"Chirpy/models"
+	"crypto/subtle"
+	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"github.com/golang-jwt/jwt/v5"
@@ -148,21 +151,21 @@ func main() {
 			}
 		}(r.Body)
 
+		loadDB, err := db.LoadDB()
+		if err != nil {
+			fmt.Printf("Error loading DB: %v\n", err)
+		}
+
 		user, userResponse, err := db.CreateItem(string(bodyBytes), "user")
 		if err != nil {
 			fmt.Printf("Error creating chirp: %v\n", err)
 		}
-		fmt.Printf("Created user %v\n", user)
 
 		userA, _ := user.(*models.User)
 
 		if !db.EmailValidator(userA.Email) {
 			respondWithError(w, http.StatusConflict, "This email address already exists")
-		}
-
-		loadDB, err := db.LoadDB()
-		if err != nil {
-			fmt.Printf("Error loading DB: %v\n", err)
+			return
 		}
 
 		err = db.WriteDB(loadDB, user)
@@ -232,14 +235,10 @@ func main() {
 			fmt.Printf("Error converting user ID to int: %v\n", err)
 		}
 
+		newDB := db.DeleteItem(userID)
 		updatedUser, updatedUserResponse, err := db.UpdateItem(string(bodyBytes), "user", userID)
 
-		loadDB, err := db.LoadDB()
-		if err != nil {
-			fmt.Printf("Error loading DB: %v\n", err)
-		}
-
-		err = db.WriteDB(loadDB, updatedUser)
+		err = db.WriteDB(newDB, updatedUser)
 		if err != nil {
 			fmt.Printf("Error writing database: %v\n", err)
 		}
@@ -272,7 +271,7 @@ func main() {
 			fmt.Printf("Error unmarshalling user: %v\n", err)
 		}
 
-		users, err := db.GetItems("users")
+		users, err := db.GetItems("user")
 		if err != nil {
 			respondWithError(w, http.StatusNotFound, "users not found")
 		}
@@ -289,7 +288,7 @@ func main() {
 				respondWithError(w, http.StatusUnauthorized, "Wrong username or password")
 			} else {
 				claims := &jwt.RegisteredClaims{
-					ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Second + time.Duration(userA.ExpiresInSeconds))),
+					ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour * 1)),
 					Issuer:    "chirpy",
 					Subject:   strconv.Itoa(userB.Id),
 				}
@@ -303,15 +302,113 @@ func main() {
 				}
 
 				userResponse := models.APIUserResponse{
-					Id:    userB.Id,
-					Email: userB.Email,
-					Token: tokenString,
+					Id:           userB.Id,
+					Email:        userB.Email,
+					Token:        tokenString,
+					RefreshToken: userB.RefreshToken,
 				}
 
 				respondWithJSON(w, http.StatusOK, userResponse)
 			}
 		}
 
+	})
+	mux.HandleFunc("POST /api/refresh", func(w http.ResponseWriter, r *http.Request) {
+		db, err := database.NewDB("database.json")
+		equal := false
+		userId := 0
+
+		headerAuth := r.Header.Get("Authorization")
+		refreshTokenWithoutPrefix := strings.TrimPrefix(headerAuth, "Bearer ")
+
+		users, err := db.GetItems("user")
+		if err != nil {
+			respondWithError(w, http.StatusNotFound, "users not found")
+		}
+
+		bytes1, err := hex.DecodeString(refreshTokenWithoutPrefix)
+		if err != nil {
+			fmt.Println(err)
+		}
+
+		for _, user := range users {
+			userB, _ := user.(*models.User)
+
+			bytes2, err := hex.DecodeString(userB.RefreshToken)
+			if err != nil {
+				fmt.Println(err)
+			}
+
+			if subtle.ConstantTimeCompare(bytes1, bytes2) == 1 {
+				equal = true
+				userId = userB.Id
+			}
+		}
+
+		if equal {
+			claims := &jwt.RegisteredClaims{
+				ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour * 1)),
+				Issuer:    "chirpy",
+				Subject:   strconv.Itoa(userId),
+			}
+
+			token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+
+			tokenString, err := token.SignedString(jwtSecret)
+			if err != nil {
+				fmt.Println("Error signing token:", err)
+				return
+			}
+
+			tokenResponse := models.TokenResponse{
+				Token: tokenString,
+			}
+			respondWithJSON(w, http.StatusOK, tokenResponse)
+		} else {
+			respondWithError(w, http.StatusUnauthorized, "Wrong refresh token")
+		}
+	})
+	mux.HandleFunc("POST /api/revoke", func(w http.ResponseWriter, r *http.Request) {
+		db, err := database.NewDB("database.json")
+		if err != nil {
+			fmt.Printf("Error loading DB: %v\n", err)
+		}
+
+		allUsers, err := db.GetItems("user")
+		if err != nil {
+			respondWithError(w, http.StatusNotFound, "users not found")
+		}
+
+		headerAuth := r.Header.Get("Authorization")
+		refreshTokenWithoutPrefix := strings.TrimPrefix(headerAuth, "Bearer ")
+		flag := false
+
+		for _, user := range allUsers {
+			userB, _ := user.(*models.User)
+
+			if userB.RefreshToken == refreshTokenWithoutPrefix {
+				flag = true
+				newDB := db.RevokeRefreshToken(userB.Id)
+
+				data, err := json.Marshal(newDB)
+				if err != nil {
+					fmt.Printf("Error marshalling DB: %v\n", err)
+				}
+
+				err = os.WriteFile("database.json", data, 0644)
+				if err != nil {
+					fmt.Printf("Error writing DB: %v\n", err)
+				}
+
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+				w.WriteHeader(http.StatusNoContent)
+			}
+		}
+
+		if !flag {
+			respondWithError(w, http.StatusUnauthorized, "There is not yours token")
+		}
 	})
 
 	fileServerHandler := http.StripPrefix("/app", http.FileServer(http.Dir(".")))
