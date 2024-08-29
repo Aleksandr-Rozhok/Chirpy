@@ -126,6 +126,9 @@ func main() {
 	}))
 	mux.HandleFunc("GET /api/chirps/{chirpID}", func(w http.ResponseWriter, r *http.Request) {
 		db, err := database.NewDB("database.json")
+		if err != nil {
+			fmt.Printf("Error opening database: %v\n", err)
+		}
 
 		path := r.URL.Path
 		sliceOfPath := strings.Split(path, "/")
@@ -146,6 +149,57 @@ func main() {
 			respondWithJSON(w, http.StatusOK, chirp)
 		}
 	})
+	mux.HandleFunc("DELETE /api/chirps/{chirpID}", cfg.checkJWTToken(func(w http.ResponseWriter, r *http.Request) {
+		claims := r.Context().Value("claims").(*jwt.RegisteredClaims)
+
+		db, err := database.NewDB("database.json")
+		if err != nil {
+			fmt.Printf("Error opening database: %v\n", err)
+		}
+
+		path := r.URL.Path
+		sliceOfPath := strings.Split(path, "/")
+		idOfChirp, err := strconv.Atoi(sliceOfPath[len(sliceOfPath)-1])
+		if err != nil {
+			fmt.Printf("Error converting chirp ID to int: %v\n", err)
+		}
+
+		chirps, err := db.GetItems("chirp")
+		if err != nil {
+			fmt.Printf("Error getting chirp %v\n", chirps)
+		}
+
+		authorIDStr, err := claims.GetSubject()
+		if err != nil {
+			http.Error(w, "Error extracting subject claims", http.StatusInternalServerError)
+		}
+
+		authorID, err := strconv.Atoi(authorIDStr)
+		if err != nil {
+			http.Error(w, "Error extracting subject claims", http.StatusInternalServerError)
+		}
+
+		if len(chirps) < idOfChirp {
+			respondWithError(w, http.StatusNotFound, "chirp not found")
+		} else {
+			chirp := chirps[idOfChirp-1]
+			typedChirp := chirp.(*models.Chirp)
+
+			if typedChirp.AuthorId == authorID {
+				newDB := db.DeleteItem(idOfChirp, "chirps")
+				var emptyItem models.Storable
+				err = db.WriteDB(newDB, emptyItem)
+				if err != nil {
+					fmt.Printf("Error writing database: %v\n", err)
+				}
+
+				respondWithJSON(w, http.StatusNoContent, chirp)
+			} else {
+				respondWithError(w, http.StatusForbidden, "You don't have access to deleting this chirp")
+			}
+
+		}
+	}))
 	mux.HandleFunc("POST /api/users", func(w http.ResponseWriter, r *http.Request) {
 		db, err := database.NewDB("database.json")
 
@@ -211,7 +265,7 @@ func main() {
 			fmt.Printf("Error converting user ID to int: %v\n", err)
 		}
 
-		newDB := db.DeleteItem(userID)
+		newDB := db.DeleteItem(userID, "users")
 		updatedUser, updatedUserResponse, err := db.UpdateItem(string(bodyBytes), "user", userID)
 
 		err = db.WriteDB(newDB, updatedUser)
@@ -222,7 +276,11 @@ func main() {
 		respondWithJSON(w, http.StatusOK, updatedUserResponse)
 	}))
 	mux.HandleFunc("POST /api/login", func(w http.ResponseWriter, r *http.Request) {
+		checkFlag := false
 		db, err := database.NewDB("database.json")
+		if err != nil {
+			fmt.Printf("Error opening database: %v\n", err)
+		}
 
 		bodyBytes, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -258,11 +316,9 @@ func main() {
 			userB, _ := user.(*models.User)
 
 			equalPass := bcrypt.CompareHashAndPassword([]byte(userB.Password), []byte(userA.Password))
-			if equalPass != nil {
-				respondWithError(w, http.StatusUnauthorized, "Wrong username or password")
-			} else if userA.Email != userB.Email {
-				respondWithError(w, http.StatusUnauthorized, "Wrong username or password")
-			} else {
+			if userA.Email == userB.Email && equalPass == nil {
+				checkFlag = true
+
 				claims := &jwt.RegisteredClaims{
 					ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour * 1)),
 					Issuer:    "chirpy",
@@ -288,6 +344,9 @@ func main() {
 			}
 		}
 
+		if !checkFlag {
+			respondWithError(w, http.StatusUnauthorized, "Wrong username or password")
+		}
 	})
 	mux.HandleFunc("POST /api/refresh", func(w http.ResponseWriter, r *http.Request) {
 		db, err := database.NewDB("database.json")
@@ -357,13 +416,13 @@ func main() {
 
 		headerAuth := r.Header.Get("Authorization")
 		refreshTokenWithoutPrefix := strings.TrimPrefix(headerAuth, "Bearer ")
-		flag := false
+		flagCheck := false
 
 		for _, user := range allUsers {
 			userB, _ := user.(*models.User)
 
 			if userB.RefreshToken == refreshTokenWithoutPrefix {
-				flag = true
+				flagCheck = true
 				newDB := db.RevokeRefreshToken(userB.Id)
 
 				data, err := json.Marshal(newDB)
@@ -382,7 +441,7 @@ func main() {
 			}
 		}
 
-		if !flag {
+		if !flagCheck {
 			respondWithError(w, http.StatusUnauthorized, "There is not yours token")
 		}
 	})

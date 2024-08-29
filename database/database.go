@@ -234,13 +234,32 @@ func (db *DB) WriteDB(dbStructure DBStructure, newItem models.Storable) error {
 }
 
 func (db *DB) generateID(lenItems int, typeId string) int {
-	if typeId == "chirp" {
-		return lenItems + 1
-	} else if typeId == "user" {
-		return lenItems + 1
+	allItems, err := db.LoadDB()
+	if err != nil {
+		fmt.Errorf("Problem with downloading database %e", err)
 	}
 
-	return 0
+	newID := 1
+
+	if typeId == "chirp" {
+		allChirps := allItems.Chirps
+
+		for chirp := range allChirps {
+			if newID == chirp {
+				newID += 1
+			}
+		}
+	} else if typeId == "user" {
+		allChirps := allItems.Users
+
+		for user := range allChirps {
+			if newID == user {
+				newID += 1
+			}
+		}
+	}
+
+	return newID
 }
 
 func (db *DB) EmailValidator(email string) bool {
@@ -261,15 +280,23 @@ func (db *DB) EmailValidator(email string) bool {
 	return true
 }
 
-func (db *DB) DeleteItem(id int) DBStructure {
+func (db *DB) DeleteItem(id int, itemType string) DBStructure {
 	items, err := db.LoadDB()
 	if err != nil {
 		fmt.Println(err)
 	}
 
-	for key, _ := range items.Users {
-		if key == id {
-			delete(items.Users, key)
+	if itemType == "users" {
+		for key := range items.Users {
+			if key == id {
+				delete(items.Users, key)
+			}
+		}
+	} else if itemType == "chirps" {
+		for key := range items.Chirps {
+			if key == id {
+				delete(items.Chirps, key)
+			}
 		}
 	}
 	return items
