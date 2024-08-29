@@ -88,8 +88,9 @@ func (db *DB) CreateUser(body string) (models.Storable, *models.UserResponse, er
 	db.mux.Unlock()
 
 	userResponse = models.UserResponse{
-		Id:    newID,
-		Email: typedUser.Email,
+		Id:          newID,
+		Email:       typedUser.Email,
+		IsChirpyRed: typedUser.IsChirpyRed,
 	}
 
 	db.mux.Lock()
@@ -127,6 +128,7 @@ func (db *DB) UpdateItem(body string, typeItem string, id int) (models.Storable,
 				db.mux.Lock()
 				v.SetHashPass(v.Password)
 				v.Email = newItemWithType.Email
+				v.IsChirpyRed = newItemWithType.IsChirpyRed
 
 				if v.ExpiresInSeconds == 0 {
 					v.ExpiresInSeconds = 5184000
@@ -136,8 +138,9 @@ func (db *DB) UpdateItem(body string, typeItem string, id int) (models.Storable,
 				db.mux.Unlock()
 
 				userResponse = models.UserResponse{
-					Id:    id,
-					Email: newItemWithType.Email,
+					Id:          id,
+					Email:       newItemWithType.Email,
+					IsChirpyRed: newItemWithType.IsChirpyRed,
 				}
 			}
 

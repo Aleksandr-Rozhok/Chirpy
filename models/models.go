@@ -33,11 +33,13 @@ type User struct {
 	Password         string `json:"password"`
 	ExpiresInSeconds int    `json:"expires_in_seconds"`
 	RefreshToken     string `json:"refresh_token"`
+	IsChirpyRed      bool   `json:"is_chirpy_red"`
 }
 
 type UserResponse struct {
-	Id    int    `json:"id"`
-	Email string `json:"email"`
+	Id          int    `json:"id"`
+	Email       string `json:"email"`
+	IsChirpyRed bool   `json:"is_chirpy_red"`
 }
 
 type APIUserResponse struct {
@@ -45,6 +47,7 @@ type APIUserResponse struct {
 	Email        string `json:"email"`
 	Token        string `json:"token"`
 	RefreshToken string `json:"refresh_token"`
+	IsChirpyRed  bool   `json:"is_chirpy_red"`
 }
 
 type TokenResponse struct {
@@ -60,11 +63,15 @@ func (u *User) GetId() int {
 }
 
 func (u *User) SetHashPass(pass string) {
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(pass), bcrypt.DefaultCost)
-	if err != nil {
-		fmt.Println(err)
+	if len(pass) == 60 {
+		u.Password = pass
+	} else {
+		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(pass), bcrypt.DefaultCost)
+		if err != nil {
+			fmt.Println(err)
+		}
+		u.Password = string(hashedPassword)
 	}
-	u.Password = string(hashedPassword)
 }
 
 func (u *User) GenerateRefreshToken() {
@@ -76,6 +83,14 @@ func (u *User) GenerateRefreshToken() {
 	}
 
 	u.RefreshToken = hex.EncodeToString(randomBytes)
+}
+
+type Webhooks struct {
+	Event string `json:"event"`
+	Data  Data   `json:"data"`
+}
+type Data struct {
+	UserID int `json:"user_id"`
 }
 
 var UnmarshalFunc = map[string]func([]byte) (Storable, error){

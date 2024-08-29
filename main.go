@@ -338,6 +338,7 @@ func main() {
 					Email:        userB.Email,
 					Token:        tokenString,
 					RefreshToken: userB.RefreshToken,
+					IsChirpyRed:  userB.IsChirpyRed,
 				}
 
 				respondWithJSON(w, http.StatusOK, userResponse)
@@ -350,6 +351,10 @@ func main() {
 	})
 	mux.HandleFunc("POST /api/refresh", func(w http.ResponseWriter, r *http.Request) {
 		db, err := database.NewDB("database.json")
+		if err != nil {
+			fmt.Printf("Error opening database: %v\n", err)
+		}
+
 		equal := false
 		userId := 0
 
@@ -443,6 +448,71 @@ func main() {
 
 		if !flagCheck {
 			respondWithError(w, http.StatusUnauthorized, "There is not yours token")
+		}
+	})
+	mux.HandleFunc("POST /api/polka/webhooks", func(w http.ResponseWriter, r *http.Request) {
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "Error reading request body", http.StatusInternalServerError)
+			return
+		}
+
+		defer func(Body io.ReadCloser) {
+			err := Body.Close()
+			if err != nil {
+				fmt.Printf("Error writing response: %v\n", err)
+			}
+		}(r.Body)
+
+		var data models.Webhooks
+		if err := json.Unmarshal(bodyBytes, &data); err != nil {
+			fmt.Printf("Error unmarshalling user: %v\n", err)
+		}
+
+		if data.Event != "user.upgraded" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		} else {
+			db, err := database.NewDB("database.json")
+			if err != nil {
+				fmt.Printf("Error opening database: %v\n", err)
+			}
+
+			allUsers, err := db.GetItems("user")
+			if err != nil {
+				respondWithError(w, http.StatusNotFound, "users not found")
+			}
+
+			if len(allUsers) < data.Data.UserID {
+				respondWithError(w, http.StatusNotFound, "users not found")
+			} else {
+				ourUser := allUsers[data.Data.UserID-1]
+				ourTypedUser := ourUser.(*models.User)
+
+				user := fmt.Sprintf(`{"email": "%s", 
+					"password": "%s", 
+					"is_chirpy_red": %v,
+					"refresh_token": "%s",
+					"expires_in_seconds": %d
+					}`, ourTypedUser.Email,
+					ourTypedUser.Password,
+					true,
+					ourTypedUser.RefreshToken,
+					ourTypedUser.ExpiresInSeconds)
+
+				updatedUser, _, err := db.UpdateItem(user, "user", ourTypedUser.Id)
+				if err != nil {
+					return
+				}
+
+				newDB := db.DeleteItem(ourTypedUser.Id, "users")
+				err = db.WriteDB(newDB, updatedUser)
+				if err != nil {
+					fmt.Printf("Error writing database: %v\n", err)
+				}
+
+				w.WriteHeader(http.StatusNoContent)
+			}
 		}
 	})
 
