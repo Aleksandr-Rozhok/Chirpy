@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"github.com/golang-jwt/jwt/v5"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type apiConfig struct {
@@ -60,4 +63,47 @@ func (cfg *apiConfig) resetVisitCounter(w http.ResponseWriter, r *http.Request) 
 	}
 
 	fmt.Printf("Response written to: %d bytes\n", write)
+}
+
+func (cfg *apiConfig) checkJWTToken(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		headerAuth := r.Header.Get("Authorization")
+		tokenWithoutPrefix := strings.TrimPrefix(headerAuth, "Bearer ")
+
+		claims := &jwt.RegisteredClaims{}
+		token, err := jwt.ParseWithClaims(tokenWithoutPrefix, claims, func(token *jwt.Token) (interface{}, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+			return cfg.jwtSecret, nil
+		})
+
+		if err != nil {
+			http.Error(w, "Unauthorized: "+err.Error(), http.StatusUnauthorized)
+			return
+		}
+
+		if !token.Valid {
+			http.Error(w, "Invalid token", http.StatusUnauthorized)
+			return
+		}
+
+		if claims.ExpiresAt.Time.Before(time.Now()) {
+			http.Error(w, "Token has expired", http.StatusUnauthorized)
+			return
+		}
+
+		if claims.Subject == "" {
+			http.Error(w, "Token subject missing", http.StatusUnauthorized)
+			return
+		}
+
+		if claims.Issuer != "chirpy" {
+			http.Error(w, "Invalid issuer", http.StatusUnauthorized)
+			return
+		}
+
+		ctx := context.WithValue(r.Context(), "claims", claims)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	}
 }

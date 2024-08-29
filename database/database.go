@@ -33,8 +33,32 @@ func NewDB(path string) (*DB, error) {
 	return &db, nil
 }
 
-func (db *DB) CreateItem(body string, typeItem string) (models.Storable, *models.UserResponse, error) {
-	unmarshalFunc, ok := models.UnmarshalFunc[typeItem]
+func (db *DB) CreateChirp(body string, authorId int) (models.Storable, error) {
+	unmarshalFunc, ok := models.UnmarshalFunc["chirp"]
+	if !ok {
+		return nil, errors.New("invalid type item")
+	}
+
+	chirp, err := unmarshalFunc([]byte(body))
+	if err != nil {
+		return nil, err
+	}
+
+	loadedDB, err := db.LoadDB()
+	if err != nil {
+		return nil, err
+	}
+
+	db.mux.Lock()
+	chirp.(*models.Chirp).AuthorId = authorId
+	chirp.SetId(db.generateID(len(loadedDB.Chirps), "chirp"))
+	db.mux.Unlock()
+
+	return chirp, nil
+}
+
+func (db *DB) CreateUser(body string) (models.Storable, *models.UserResponse, error) {
+	unmarshalFunc, ok := models.UnmarshalFunc["user"]
 	if !ok {
 		return nil, nil, errors.New("invalid type item")
 	}
@@ -42,7 +66,7 @@ func (db *DB) CreateItem(body string, typeItem string) (models.Storable, *models
 	newID := 0
 	userResponse := models.UserResponse{}
 
-	item, err := unmarshalFunc([]byte(body))
+	user, err := unmarshalFunc([]byte(body))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -52,31 +76,27 @@ func (db *DB) CreateItem(body string, typeItem string) (models.Storable, *models
 		return nil, nil, err
 	}
 
-	switch v := item.(type) {
-	case *models.Chirp:
-		newID = db.generateID(len(loadedDB.Chirps), "chirp")
-	case *models.User:
-		newID = db.generateID(len(loadedDB.Users), "user")
-		db.mux.Lock()
-		v.SetHashPass(v.Password)
-		v.GenerateRefreshToken()
+	newID = db.generateID(len(loadedDB.Users), "user")
+	typedUser := user.(*models.User)
+	db.mux.Lock()
+	typedUser.SetHashPass(typedUser.Password)
+	typedUser.GenerateRefreshToken()
 
-		if v.ExpiresInSeconds == 0 {
-			v.ExpiresInSeconds = 5184000
-		}
-		db.mux.Unlock()
+	if typedUser.ExpiresInSeconds == 0 {
+		typedUser.ExpiresInSeconds = 5184000
+	}
+	db.mux.Unlock()
 
-		userResponse = models.UserResponse{
-			Id:    newID,
-			Email: v.Email,
-		}
+	userResponse = models.UserResponse{
+		Id:    newID,
+		Email: typedUser.Email,
 	}
 
 	db.mux.Lock()
-	item.SetId(newID)
+	user.SetId(newID)
 	db.mux.Unlock()
 
-	return item, &userResponse, nil
+	return user, &userResponse, nil
 }
 
 func (db *DB) UpdateItem(body string, typeItem string, id int) (models.Storable, *models.UserResponse, error) {
