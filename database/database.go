@@ -39,19 +39,21 @@ func (db *DB) CreateChirp(body string, authorId int) (models.Storable, error) {
 		return nil, errors.New("invalid type item")
 	}
 
-	chirp, err := unmarshalFunc([]byte(body))
-	if err != nil {
-		return nil, err
-	}
-
 	loadedDB, err := db.LoadDB()
 	if err != nil {
 		return nil, err
 	}
 
+	newId := db.generateID(len(loadedDB.Chirps), "chirp")
+
 	db.mux.Lock()
+	chirp, err := unmarshalFunc([]byte(body))
+	if err != nil {
+		return nil, err
+	}
+
 	chirp.(*models.Chirp).AuthorId = authorId
-	chirp.SetId(db.generateID(len(loadedDB.Chirps), "chirp"))
+	chirp.SetId(newId)
 	db.mux.Unlock()
 
 	return chirp, nil

@@ -66,11 +66,13 @@ func main() {
 	mux.HandleFunc("GET /admin/metrics", cfg.checkMainPageVisit)
 	mux.HandleFunc("GET /api/reset", cfg.resetVisitCounter)
 	mux.HandleFunc("GET /api/chirps", func(w http.ResponseWriter, r *http.Request) {
-		queryParam := r.URL.Query().Get("author_id")
-		authorId, err := strconv.Atoi(queryParam)
+		queryAuthorParam := r.URL.Query().Get("author_id")
+		authorId, err := strconv.Atoi(queryAuthorParam)
 		if err != nil {
 			fmt.Printf("Error parsing author_id: %v\n", err)
 		}
+
+		querySortParam := r.URL.Query().Get("sort")
 
 		db, err := database.NewDB("database.json")
 		if err != nil {
@@ -81,9 +83,8 @@ func main() {
 		if err != nil {
 			return
 		}
-		fmt.Println(queryParam)
 
-		if queryParam != "" {
+		if queryAuthorParam != "" {
 			allChirpsOfAuthor := []models.Storable{}
 
 			for _, chirp := range chirps {
@@ -94,9 +95,13 @@ func main() {
 				}
 			}
 
-			respondWithJSON(w, http.StatusOK, allChirpsOfAuthor)
+			sortedChirps := responseWithSort(allChirpsOfAuthor, querySortParam)
+
+			respondWithJSON(w, http.StatusOK, sortedChirps)
 		} else {
-			respondWithJSON(w, http.StatusOK, chirps)
+			sortedChirps := responseWithSort(chirps, querySortParam)
+
+			respondWithJSON(w, http.StatusOK, sortedChirps)
 		}
 	})
 	mux.HandleFunc("POST /api/chirps", cfg.checkJWTToken(func(w http.ResponseWriter, r *http.Request) {
