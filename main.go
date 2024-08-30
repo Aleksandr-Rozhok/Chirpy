@@ -25,6 +25,7 @@ func main() {
 		fmt.Println("Error loading .env file")
 	}
 	jwtSecret := []byte(os.Getenv("JWT_SECRET"))
+	polkaAPI := []byte(os.Getenv("POLKA_API"))
 
 	debug := flag.Bool("debug", false, "Run server in debug mode")
 	flag.Parse()
@@ -451,6 +452,14 @@ func main() {
 		}
 	})
 	mux.HandleFunc("POST /api/polka/webhooks", func(w http.ResponseWriter, r *http.Request) {
+		headerAuth := r.Header.Get("Authorization")
+		polkaAPIKeyWithoutPrefix := strings.TrimPrefix(headerAuth, "ApiKey ")
+
+		if string(polkaAPI) != polkaAPIKeyWithoutPrefix {
+			http.Error(w, "Error request", http.StatusUnauthorized)
+			return
+		}
+
 		bodyBytes, err := io.ReadAll(r.Body)
 		if err != nil {
 			http.Error(w, "Error reading request body", http.StatusInternalServerError)
