@@ -66,6 +66,12 @@ func main() {
 	mux.HandleFunc("GET /admin/metrics", cfg.checkMainPageVisit)
 	mux.HandleFunc("GET /api/reset", cfg.resetVisitCounter)
 	mux.HandleFunc("GET /api/chirps", func(w http.ResponseWriter, r *http.Request) {
+		queryParam := r.URL.Query().Get("author_id")
+		authorId, err := strconv.Atoi(queryParam)
+		if err != nil {
+			fmt.Printf("Error parsing author_id: %v\n", err)
+		}
+
 		db, err := database.NewDB("database.json")
 		if err != nil {
 			fmt.Printf("Error opening database: %v\n", err)
@@ -75,8 +81,23 @@ func main() {
 		if err != nil {
 			return
 		}
+		fmt.Println(queryParam)
 
-		respondWithJSON(w, http.StatusOK, chirps)
+		if queryParam != "" {
+			allChirpsOfAuthor := []models.Storable{}
+
+			for _, chirp := range chirps {
+				typedChirp := chirp.(*models.Chirp)
+
+				if typedChirp.AuthorId == authorId {
+					allChirpsOfAuthor = append(allChirpsOfAuthor, typedChirp)
+				}
+			}
+
+			respondWithJSON(w, http.StatusOK, allChirpsOfAuthor)
+		} else {
+			respondWithJSON(w, http.StatusOK, chirps)
+		}
 	})
 	mux.HandleFunc("POST /api/chirps", cfg.checkJWTToken(func(w http.ResponseWriter, r *http.Request) {
 		claims := r.Context().Value("claims").(*jwt.RegisteredClaims)
